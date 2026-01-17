@@ -38,3 +38,49 @@ void Limit::delete_order(OrderPointer order) {
     total_volume -= order->get_remaining_volume();
     order_number--;
 }
+
+Trades Limit::match_order(OrderPointer& order) {
+    Trades trades;
+
+    while (order_number > 0 and not order->is_fulfilled()) {
+        Volume fill_volume = std::min(head->get_remaining_volume(), order->get_remaining_volume());
+        head->fill(fill_volume);
+        order->fill(fill_volume);
+        total_volume -= fill_volume;
+        trades.emplace_back(
+            order->get_order_id(),
+            head->get_order_id(),
+            limit_price,
+            fill_volume
+        );
+        if (head->is_fulfilled()) {
+            delete_order(head);
+        }
+    }
+    return trades;
+}
+
+bool Limit::is_empty() {
+    return order_number == 0;
+}
+
+PRICE Limit::get_price() const { return limit_price; }
+Length Limit::get_order_number() { return order_number; }
+Volume Limit::get_total_volume() { return total_volume; }
+
+void Limit::print() {
+    std::cout << "Limit Price: " << limit_price << std::endl;
+    std::cout << "Number of Orders: " << order_number << std::endl;
+    std::cout << "Total Volume: " << total_volume << std::endl;
+
+    OrderPointer current = head;
+    while (current) {
+        std::cout << "\t";
+        current->print();
+        current = current->get_next_order();
+    }
+}
+
+const std::function<bool(const LimitPointer&, const LimitPointer&)> cmp_limits = [](const LimitPointer& a, const LimitPointer& b) {
+    return a->get_price() < b->get_price();
+};
