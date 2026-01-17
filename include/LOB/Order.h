@@ -60,11 +60,11 @@ class Order {
         Volume get_remaining_volume() const;
         OrderStatus get_order_status() const;
 
-        void set_order_status(OrderStatus status);
+        void set_order_status(OrderStatus order_status);
         std::shared_ptr<Order> &get_prev_order();
-        void set_prev_order(std::shared_ptr<Order> &prev);
+        void set_prev_order(std::shared_ptr<Order> &prev_order);
         std::shared_ptr<Order> &get_next_order();
-        void set_next_order(std::shared_ptr<Order> &next);
+        void set_next_order(std::shared_ptr<Order> &next_order);
 
         /** Print order details */
         void print();
