@@ -3,6 +3,7 @@ project(HIGH_PERFORMANCE_LOB LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(LOB
     src/Book.cpp
@@ -10,7 +11,6 @@ add_executable(LOB
     src/Order.cpp
 )
 
-target_include_directories(lob
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_include_directories(LOB PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
