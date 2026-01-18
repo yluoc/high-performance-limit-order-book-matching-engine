@@ -82,9 +82,11 @@ bool Book::match_against_level(Order* incoming_order, Level* level) {
     // Match in FIFO order (head to tail)
     while (level->get_head() && !incoming_order->is_fulfilled()) {
         Order* resting_order = level->get_head();
-        Volume fill_volume = (resting_order->get_remaining_volume() < incoming_order->get_remaining_volume())
-                            ? resting_order->get_remaining_volume()
-                            : incoming_order->get_remaining_volume();
+        Volume resting_remaining = resting_order->get_remaining_volume();
+        Volume incoming_remaining = incoming_order->get_remaining_volume();
+        Volume fill_volume = (resting_remaining < incoming_remaining)
+                            ? resting_remaining
+                            : incoming_remaining;
         
         // Fill both orders
         resting_order->fill(fill_volume);
@@ -99,17 +101,14 @@ bool Book::match_against_level(Order* incoming_order, Level* level) {
             fill_volume
         );
         
-        // Handle fulfilled resting order
         if (resting_order->is_fulfilled()) {
-            // Remove from level
-            level->pop_front();
+            resting_order->set_order_status(FULFILLED);
             
-            // Remove from id_to_order and return to pool
-            auto it = id_to_order.find(resting_order->get_order_id());
-            if (it != id_to_order.end()) {
-                id_to_order.erase(it);
-            }
-            order_pool.deallocate(resting_order);
+            Order* fulfilled_order = level->pop_front();
+            
+            id_to_order.erase(fulfilled_order->get_order_id());
+            
+            order_pool.deallocate(fulfilled_order);
         }
     }
     
@@ -119,7 +118,7 @@ bool Book::match_against_level(Order* incoming_order, Level* level) {
 void Book::delete_order(ID id) {
     auto it = id_to_order.find(id);
     if (it == id_to_order.end()) {
-        return; // Order not found
+        return;
     }
     
     Order* order = it->second;
@@ -128,6 +127,8 @@ void Book::delete_order(ID id) {
         remove_order_from_level(order, is_buy);
         id_to_order.erase(it);
         order_pool.deallocate(order);
+    } else {
+        id_to_order.erase(it);
     }
 }
 
@@ -214,7 +215,7 @@ void Book::update_best_bid() {
         return;
     }
     
-    // Get highest price (last element in set)
+    // Get highest price
     PRICE best_price = *buy_prices.rbegin();
     auto it = buy_side_limits.find(best_price);
     if (it != buy_side_limits.end() && !it->second->is_empty()) {
@@ -225,13 +226,12 @@ void Book::update_best_bid() {
 }
 
 void Book::update_best_ask() {
-    // Use price set for O(log n) lookup
     if (sell_prices.empty()) {
         best_ask = nullptr;
         return;
     }
     
-    // Get lowest price (first element in set)
+    // Get lowest price
     PRICE best_price = *sell_prices.begin();
     auto it = sell_side_limits.find(best_price);
     if (it != sell_side_limits.end() && !it->second->is_empty()) {
