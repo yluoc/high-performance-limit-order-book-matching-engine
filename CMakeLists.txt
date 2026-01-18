@@ -10,7 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_executable(LOB
     main.cpp
     src/Book.cpp
-    src/Limit.cpp
+    src/Level.cpp
     src/Order.cpp
 )
 
@@ -25,7 +25,7 @@ find_package(GTest REQUIRED)
 add_executable(LOBTest
     test/LOBTest.cpp
     src/Book.cpp
-    src/Limit.cpp
+    src/Level.cpp
     src/Order.cpp
 )
 
@@ -38,5 +38,18 @@ target_link_libraries(LOBTest
     GTest::gtest_main
 )
 
-enable_testing()
 add_test(NAME LOBTest COMMAND LOBTest)
+
+# Benchmark executable
+add_executable(LOBBench
+    bench/bench_orderbook.cpp
+    src/Book.cpp
+    src/Level.cpp
+    src/Order.cpp
+)
+
+target_include_directories(LOBBench PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+enable_testing()
