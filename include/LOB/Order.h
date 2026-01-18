@@ -2,8 +2,20 @@
 #define LOB_ORDER_H
 
 #include "Types.h"
-#include <memory>
 
+// Forward declaration
+class Order;
+
+/**
+ * Order: Represents a limit order in the order book.
+ * 
+ * Uses intrusive linked list (raw pointers) for FIFO ordering at same price level.
+ * Orders are owned by the Book's SlabPool, not by shared_ptr.
+ * 
+ * Invariants:
+ * - prev_order and next_order are either nullptr or point to valid Orders in the same Level
+ * - Order lifetime is managed by Book's SlabPool
+ */
 class Order {
     private:
         ID order_id; /**< Order id */
@@ -14,9 +26,9 @@ class Order {
         Volume remaining_volume; /**< Volume/number of remaining shares in the order */
         OrderStatus order_status; /**< Current status of the order */
         
-        /** As orders are stored in a doubly-linked list, each order stores its previous and next orders */
-        std::shared_ptr<Order> prev_order; /**< Previous order in the list */
-        std::shared_ptr<Order> next_order; /**< Next order in the list */
+        /** Intrusive doubly-linked list for FIFO ordering at same price level */
+        Order* prev_order; /**< Previous order in the list (nullptr if first) */
+        Order* next_order; /**< Next order in the list (nullptr if last) */
         
     public:
         Order(
@@ -49,7 +61,7 @@ class Order {
          * @brief checks if the order is fulfilled
          * @return true if the order is fulfilled, false otherwise
          */
-        bool is_fulfilled();
+        bool is_fulfilled() const;
 
         /** Getters and setters */
         ID get_order_id() const;
@@ -61,15 +73,18 @@ class Order {
         OrderStatus get_order_status() const;
 
         void set_order_status(OrderStatus order_status);
-        std::shared_ptr<Order> &get_prev_order();
-        void set_prev_order(std::shared_ptr<Order> &prev_order);
-        std::shared_ptr<Order> &get_next_order();
-        void set_next_order(std::shared_ptr<Order> &next_order);
+        
+        // Intrusive list accessors (for Level class)
+        Order* get_prev_order() const { return prev_order; }
+        void set_prev_order(Order* prev) { prev_order = prev; }
+        Order* get_next_order() const { return next_order; }
+        void set_next_order(Order* next) { next_order = next; }
 
         /** Print order details */
         void print();
 };
 
-using OrderPointer = std::shared_ptr<Order>;
+// Raw pointer type alias for clarity
+using OrderPointer = Order*;
 
 #endif // LOB_ORDER_H

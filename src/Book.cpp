@@ -1,160 +1,310 @@
 #include "LOB/Book.h"
+#include <algorithm>
+#include <iostream>
+#include <limits>
 
-Trades Book::place_order(OrderPointer& order) {
-    if (order->get_order_price() <= 0) return {};
+Book::Book(size_t initial_capacity)
+    : best_bid(nullptr),
+      best_ask(nullptr),
+      order_pool(initial_capacity),
+      level_pool(initial_capacity / 16) { // Fewer levels than orders
+    trade_buffer.reserve(TRADE_BUFFER_SIZE);
+    
+    // Reserve hash table buckets for better performance
+    buy_side_limits.reserve(256);
+    sell_side_limits.reserve(256);
+    id_to_order.reserve(initial_capacity);
+}
 
-    Trades trades;
-    id_to_order[order->get_order_id()] = order;
-
-    if (order->get_order_type() == BUY) {
-        while (best_sell and order->get_order_price() >= best_sell and order->get_order_status() != FULFILLED) {
-            Trades trades_at_limit = sell_side_limits[best_sell]->match_order(order);
-            trades.insert(trades.end(), trades_at_limit.begin(), trades_at_limit.end());
-            check_for_empty_sell_limit(best_sell);
+const Trades& Book::place_order(
+    ID order_id,
+    ID agent_id,
+    OrderType order_type,
+    PRICE price,
+    Volume volume
+) {
+    // Clear trade buffer
+    trade_buffer.clear();
+    
+    // Validate price
+    if (price <= 0 || volume == 0) {
+        return trade_buffer;
+    }
+    
+    // Allocate order from pool
+    Order* order = order_pool.allocate(
+        order_id, agent_id, order_type, price, volume, volume, ACTIVE
+    );
+    
+    // Match against opposite side
+    if (order_type == BUY) {
+        // Match against best ask
+        while (best_ask && price >= best_ask->get_price() && !order->is_fulfilled()) {
+            bool level_empty = match_against_level(order, best_ask);
+            if (level_empty) {
+                PRICE empty_price = best_ask->get_price();
+                level_pool.deallocate(best_ask);
+                sell_side_limits.erase(empty_price);
+                sell_prices.erase(empty_price);
+                update_best_ask();
+            }
         }
     } else {
-        while (best_buy and order->get_order_price() <= best_buy and order->get_order_status() != FULFILLED) {
-            Trades trades_at_limit = buy_side_limits[best_buy]->match_order(order);
-            trades.insert(trades.end(), trades_at_limit.begin(), trades_at_limit.end());
-            check_for_empty_buy_limit(best_buy);
+        // Match against best bid
+        while (best_bid && price <= best_bid->get_price() && !order->is_fulfilled()) {
+            bool level_empty = match_against_level(order, best_bid);
+            if (level_empty) {
+                PRICE empty_price = best_bid->get_price();
+                level_pool.deallocate(best_bid);
+                buy_side_limits.erase(empty_price);
+                buy_prices.erase(empty_price);
+                update_best_bid();
+            }
         }
     }
+    
+    // Insert as resting order if not fulfilled
+    if (!order->is_fulfilled()) {
+        insert_resting_order(order);
+    } else {
+        // Order was fully matched, return to pool
+        order_pool.deallocate(order);
+    }
+    
+    return trade_buffer;
+}
 
-    if (order->get_order_status() != FULFILLED) { insert_order(order); }
-
-    return trades;
+bool Book::match_against_level(Order* incoming_order, Level* level) {
+    if (!incoming_order || !level || level->is_empty()) {
+        return false;
+    }
+    
+    // Match in FIFO order (head to tail)
+    while (level->get_head() && !incoming_order->is_fulfilled()) {
+        Order* resting_order = level->get_head();
+        Volume fill_volume = (resting_order->get_remaining_volume() < incoming_order->get_remaining_volume())
+                            ? resting_order->get_remaining_volume()
+                            : incoming_order->get_remaining_volume();
+        
+        // Fill both orders
+        resting_order->fill(fill_volume);
+        incoming_order->fill(fill_volume);
+        level->decrease_volume(fill_volume);
+        
+        // Create trade record
+        trade_buffer.emplace_back(
+            incoming_order->get_order_id(),
+            resting_order->get_order_id(),
+            level->get_price(),
+            fill_volume
+        );
+        
+        // Handle fulfilled resting order
+        if (resting_order->is_fulfilled()) {
+            // Remove from level
+            level->pop_front();
+            
+            // Remove from id_to_order and return to pool
+            auto it = id_to_order.find(resting_order->get_order_id());
+            if (it != id_to_order.end()) {
+                id_to_order.erase(it);
+            }
+            order_pool.deallocate(resting_order);
+        }
+    }
+    
+    return level->is_empty();
 }
 
 void Book::delete_order(ID id) {
-    if (not id_to_order.contains(id)) return;
-
-    OrderPointer order = id_to_order[id];
+    auto it = id_to_order.find(id);
+    if (it == id_to_order.end()) {
+        return; // Order not found
+    }
+    
+    Order* order = it->second;
     if (order->get_order_status() == ACTIVE) {
-        delete_order(order, order->get_order_type() == BUY);
-        id_to_order.erase(id);
+        bool is_buy = (order->get_order_type() == BUY);
+        remove_order_from_level(order, is_buy);
+        id_to_order.erase(it);
+        order_pool.deallocate(order);
     }
 }
 
-bool Book::is_in_buy_limits(PRICE price) {
-    return buy_side_limits.contains(price);
-}
-
-bool Book::is_in_sell_limits(PRICE price) {
-    return sell_side_limits.contains(price);
-}
-
-void Book::update_best_buy() {
-    if (not buy_side_tree.empty()) {
-        best_buy = *buy_side_tree.rbegin();
-    } else {
-        best_buy = 0;
-    }
-}
-
-void Book::update_best_sell() {
-    if (not sell_side_tree.empty()) {
-        best_sell = *sell_side_tree.begin();
-    } else {
-        best_sell = 0;
-    }
-}
-
-void Book::check_for_empty_buy_limit(PRICE price) {
-    if (is_in_buy_limits(price) and buy_side_limits[price]->is_empty()) {
-        buy_side_limits.erase(price);
-        buy_side_tree.erase(price);
-        if (price == best_buy) {
-            update_best_buy();
-        }
-    }
-}
-
-void Book::check_for_empty_sell_limit(PRICE price) {
-    if (is_in_sell_limits(price) and sell_side_limits[price]->is_empty()) {
-        sell_side_limits.erase(price);
-        sell_side_tree.erase(price);
-        if (price == best_sell) {
-            update_best_sell();
-        }
-    }
-}
-
-void Book::insert_order(OrderPointer& order) {
+void Book::insert_resting_order(Order* order) {
     PRICE price = order->get_order_price();
-    bool is_buy = order->get_order_type() == BUY;
-
-    LimitPointer limit = get_or_create_limit(price, is_buy);
-
-    if (is_buy and (not best_buy or price > best_buy)) {
-        best_buy = price;
-    } else if (not is_buy and (not best_sell or price < best_sell)) {
-        best_sell = price;
-    }
-
-    limit->insert_order(order);
-}
-
-LimitPointer Book::get_or_create_limit(PRICE price, bool is_buy) {
-    LimitPointer limit;
+    bool is_buy = (order->get_order_type() == BUY);
+    
+    Level* level = get_or_create_level(price, is_buy);
+    level->push_back(order);
+    
+    // Update price sets
     if (is_buy) {
-        if (is_in_buy_limits(price)) {
-            limit = buy_side_limits[price];
-        } else {
-            limit = std::make_shared<Limit>(price);
-            buy_side_tree.insert(price);
-            buy_side_limits[price] = limit;
+        buy_prices.insert(price);
+    } else {
+        sell_prices.insert(price);
+    }
+    
+    // Update best prices
+    if (is_buy) {
+        if (!best_bid || price > best_bid->get_price()) {
+            best_bid = level;
         }
     } else {
-        if (is_in_sell_limits(price)) {
-            limit = sell_side_limits[price];
-        } else {
-            limit = std::make_shared<Limit>(price);
-            sell_side_tree.insert(price);
-            sell_side_limits[price] = limit;
+        if (!best_ask || price < best_ask->get_price()) {
+            best_ask = level;
         }
     }
-    return limit;
+    
+    // Store in id_to_order for cancellation
+    id_to_order[order->get_order_id()] = order;
 }
 
-void Book::delete_order(OrderPointer& order, bool is_buy) {
+Level* Book::get_or_create_level(PRICE price, bool is_buy) {
+    PriceLevelMap& limits = is_buy ? buy_side_limits : sell_side_limits;
+    auto it = limits.find(price);
+    
+    if (it != limits.end()) {
+        return it->second;
+    }
+    
+    // Create new level
+    Level* level = level_pool.allocate(price);
+    limits[price] = level;
+    return level;
+}
+
+void Book::remove_order_from_level(Order* order, bool is_buy) {
     PRICE price = order->get_order_price();
-    if (is_buy) {
-        if (not is_in_buy_limits(price)) return;
-        buy_side_limits[price]->delete_order(order);
-        check_for_empty_buy_limit(price);
-    } else {
-        if (not is_in_sell_limits(price)) return;
-        sell_side_limits[price]->delete_order(order);
-        check_for_empty_sell_limit(price);
+    PriceLevelMap& limits = is_buy ? buy_side_limits : sell_side_limits;
+    PriceSet& prices = is_buy ? buy_prices : sell_prices;
+    
+    auto it = limits.find(price);
+    if (it == limits.end()) {
+        return;
+    }
+    
+    Level* level = it->second;
+    level->erase(order);
+    order->set_order_status(DELETED);
+    
+    // Check if level is now empty
+    if (level->is_empty()) {
+        level_pool.deallocate(level);
+        limits.erase(it);
+        prices.erase(price);
+        
+        // Update best prices
+        if (is_buy) {
+            if (best_bid == level) {
+                update_best_bid();
+            }
+        } else {
+            if (best_ask == level) {
+                update_best_ask();
+            }
+        }
     }
 }
 
-void Book::print() {
-    for (PRICE price : buy_side_tree) {
-        buy_side_limits[price]->print();
+void Book::update_best_bid() {
+    // Use price set for O(log n) lookup
+    if (buy_prices.empty()) {
+        best_bid = nullptr;
+        return;
     }
+    
+    // Get highest price (last element in set)
+    PRICE best_price = *buy_prices.rbegin();
+    auto it = buy_side_limits.find(best_price);
+    if (it != buy_side_limits.end() && !it->second->is_empty()) {
+        best_bid = it->second;
+    } else {
+        best_bid = nullptr;
+    }
+}
+
+void Book::update_best_ask() {
+    // Use price set for O(log n) lookup
+    if (sell_prices.empty()) {
+        best_ask = nullptr;
+        return;
+    }
+    
+    // Get lowest price (first element in set)
+    PRICE best_price = *sell_prices.begin();
+    auto it = sell_side_limits.find(best_price);
+    if (it != sell_side_limits.end() && !it->second->is_empty()) {
+        best_ask = it->second;
+    } else {
+        best_ask = nullptr;
+    }
+}
+
+PRICE Book::get_best_buy() const {
+    return best_bid ? best_bid->get_price() : 0;
+}
+
+PRICE Book::get_best_sell() const {
+    return best_ask ? best_ask->get_price() : 0;
+}
+
+PRICE Book::get_spread() const {
+    PRICE bid = get_best_buy();
+    PRICE ask = get_best_sell();
+    if (bid == 0 || ask == 0) return 0;
+    return ask - bid;
+}
+
+double Book::get_mid_price() const {
+    PRICE bid = get_best_buy();
+    PRICE ask = get_best_sell();
+    if (bid == 0 || ask == 0) return 0.0;
+    return (bid + ask) / 2.0;
+}
+
+std::vector<PRICE> Book::get_buy_prices() const {
+    std::vector<PRICE> result;
+    result.reserve(buy_prices.size());
+    for (auto it = buy_prices.rbegin(); it != buy_prices.rend(); ++it) {
+        PRICE price = *it;
+        auto level_it = buy_side_limits.find(price);
+        if (level_it != buy_side_limits.end() && !level_it->second->is_empty()) {
+            result.push_back(price);
+        }
+    }
+    return result;
+}
+
+std::vector<PRICE> Book::get_sell_prices() const {
+    std::vector<PRICE> result;
+    result.reserve(sell_prices.size());
+    for (PRICE price : sell_prices) {
+        auto level_it = sell_side_limits.find(price);
+        if (level_it != sell_side_limits.end() && !level_it->second->is_empty()) {
+            result.push_back(price);
+        }
+    }
+    return result;
+}
+
+OrderStatus Book::get_order_status(ID id) const {
+    auto it = id_to_order.find(id);
+    if (it != id_to_order.end()) {
+        return it->second->get_order_status();
+    }
+    return DELETED;
+}
+
+void Book::print() const {
     std::cout << "==== BUY SIDE ====" << std::endl;
-    std::cout << "Best Buy: " << best_buy << std::endl;
-    std::cout << "==== SELL SIDE ====" << std::endl;
-    std::cout << "Best Sell: " << best_sell << std::endl;
-    for (PRICE price : sell_side_tree) {
-        sell_side_limits[price]->print();
+    std::cout << "Best Buy: " << get_best_buy() << std::endl;
+    for (const auto& [price, level] : buy_side_limits) {
+        level->print();
     }
-}
-
-PRICE Book::get_spread() { return best_sell - best_buy; }
-
-double Book::get_mid_price() { return (best_sell + best_buy) / 2.; }
-
-PriceTree& Book::get_buy_tree() { return buy_side_tree; }
-PriceLimitMap& Book::get_buy_limits() { return buy_side_limits; }
-PriceTree& Book::get_sell_tree() { return sell_side_tree; }
-PriceLimitMap& Book::get_sell_limits() { return sell_side_limits; }
-PRICE Book::get_best_buy(){ return best_buy; }
-PRICE Book::get_best_sell() { return best_sell; }
-Orders& Book::get_id_to_order() { return id_to_order; }
-OrderStatus Book::get_order_status(ID id) {
-	if (id_to_order.contains(id))
-		return id_to_order[id]->get_order_status();
-	return DELETED;
+    std::cout << "==== SELL SIDE ====" << std::endl;
+    std::cout << "Best Sell: " << get_best_sell() << std::endl;
+    for (const auto& [price, level] : sell_side_limits) {
+        level->print();
+    }
 }

@@ -1,13 +1,15 @@
 #include <iostream>
+#include <cassert>
 #include "LOB/Order.h"
 
 void Order::fill(Volume fill_volume) {
-    if (fill_volume > remaining_volume) throw std::logic_error("Fill volume exceeds remaining volume");
+    // Assert in debug builds only - no exceptions in hot path
+    assert(fill_volume <= remaining_volume && "Fill volume exceeds remaining volume");
     remaining_volume -= fill_volume;
     if (remaining_volume == 0) order_status = FULFILLED;
 }
 
-bool Order::is_fulfilled() {
+bool Order::is_fulfilled() const {
     return remaining_volume == 0;
 }
 
@@ -20,10 +22,6 @@ Volume Order::get_remaining_volume() const { return remaining_volume; }
 OrderStatus Order::get_order_status() const { return order_status; }
 
 void Order::set_order_status(OrderStatus status) { this->order_status = status; }
-OrderPointer &Order::get_prev_order() { return prev_order; }
-void Order::set_prev_order(OrderPointer &prev) { this->prev_order = prev; }
-OrderPointer &Order::get_next_order() { return next_order; }
-void Order::set_next_order(OrderPointer &next) { this->next_order = next; }
 
 void Order::print() {
     std::cout << "Order Details:" << std::endl;
