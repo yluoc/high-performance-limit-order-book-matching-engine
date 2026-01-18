@@ -1,10 +1,10 @@
-#include "Book.h"
+#include "LOB/Book.h"
 
 Trades Book::place_order(OrderPointer& order) {
     if (order->get_order_price() <= 0) return {};
 
     Trades trades;
-    id_to_order[order->get_order_id()] == order;
+    id_to_order[order->get_order_id()] = order;
 
     if (order->get_order_type() == BUY) {
         while (best_sell and order->get_order_price() >= best_sell and order->get_order_status() != FULFILLED) {
@@ -26,11 +26,12 @@ Trades Book::place_order(OrderPointer& order) {
 }
 
 void Book::delete_order(ID id) {
-    if (id_to_order.contains(id)) return;
+    if (not id_to_order.contains(id)) return;
 
     OrderPointer order = id_to_order[id];
-    if (order->get_order_status() != ACTIVE) {
-        delete_order(order, order->get_order_status() == BUY);
+    if (order->get_order_status() == ACTIVE) {
+        delete_order(order, order->get_order_type() == BUY);
+        id_to_order.erase(id);
     }
 }
 
@@ -116,14 +117,15 @@ LimitPointer Book::get_or_create_limit(PRICE price, bool is_buy) {
 }
 
 void Book::delete_order(OrderPointer& order, bool is_buy) {
+    PRICE price = order->get_order_price();
     if (is_buy) {
-        if (not is_in_buy_limits(order->get_order_price())) return;
-        buy_side_limits[order->get_order_price()]->delete_order(order);
-        check_for_empty_buy_limit(order->get_order_price());
+        if (not is_in_buy_limits(price)) return;
+        buy_side_limits[price]->delete_order(order);
+        check_for_empty_buy_limit(price);
     } else {
-        if (not is_in_sell_limits(order->get_order_price())) return;
-        sell_side_limits[order->get_order_price()]->delete_order(order);
-        check_for_empty_sell_limit(order->get_order_price());
+        if (not is_in_sell_limits(price)) return;
+        sell_side_limits[price]->delete_order(order);
+        check_for_empty_sell_limit(price);
     }
 }
 
