@@ -1,8 +1,9 @@
 #include <iostream>
 #include "LOB/Level.h"
+#include "LOB/Macros.h"
 
 void Level::push_back(Order* order) {
-    if (!order) return;
+    if (LOB_UNLIKELY(!order)) return;
     
     if (order_number == 0) {
         // First order in the level
@@ -45,7 +46,7 @@ Order* Level::pop_front() {
 }
 
 void Level::erase(Order* order) {
-    if (!order || order_number == 0) return;
+    if (LOB_UNLIKELY(!order || order_number == 0)) return;
     
     if (order_number == 1) {
         // Only one order
