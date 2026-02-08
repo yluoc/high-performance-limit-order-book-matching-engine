@@ -77,11 +77,14 @@ vector<Message> generate_realistic_messages(const SimulationParams& params, uint
             PRICE price;
             if (params.match_rate > 0.0 && uniform_real_distribution<double>(0.0, 1.0)(rng) < params.match_rate) {
                 // Aggressive order that will match
+                int offset = uniform_int_distribution<int>(-5, 5)(rng);
+                int raw_price;
                 if (ot == BUY) {
-                    price = current_mid + uniform_int_distribution<PRICE>(-5, 5)(rng);
+                    raw_price = static_cast<int>(current_mid) + offset;
                 } else {
-                    price = current_mid - uniform_int_distribution<PRICE>(-5, 5)(rng);
+                    raw_price = static_cast<int>(current_mid) - offset;
                 }
+                price = static_cast<PRICE>(std::max(1, raw_price));
             } else {
                 // Passive order
                 price = price_dist(rng);
@@ -273,10 +276,10 @@ int main(int argc, char** argv) {
         params.total_messages = std::stoull(argv[1]);
     }
     
-    params.cancel_rate = 0.10;         
-    params.match_rate = 0.40;          
-    params.price_range_start = 100;
-    params.price_range_end = 110;     
+    params.cancel_rate = 0.10;
+    params.match_rate = 0.40;
+    params.price_range_start = 9990;
+    params.price_range_end = 10010;     
     params.min_volume = 1;
     params.max_volume = 1000;
     params.num_agents = 1000;         
