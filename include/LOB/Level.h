@@ -24,14 +24,19 @@ class Level {
 
         Order* head; /**< First order in the list (oldest, FIFO) */
         Order* tail; /**< Last order in the list (most recent) */
-        
+
+        Level* prev_level; /**< Previous level in sorted intrusive list */
+        Level* next_level; /**< Next level in sorted intrusive list */
+
     public:
         Level(PRICE price):
             limit_price(price),
             order_number(0),
             total_volume(0),
             head(nullptr),
-            tail(nullptr)
+            tail(nullptr),
+            prev_level(nullptr),
+            next_level(nullptr)
         {}
         
         /**
@@ -73,6 +78,11 @@ class Level {
         
         Order* get_head() const { return head; }
         Order* get_tail() const { return tail; }
+
+        Level* get_prev_level() const { return prev_level; }
+        void set_prev_level(Level* p) { prev_level = p; }
+        Level* get_next_level() const { return next_level; }
+        void set_next_level(Level* n) { next_level = n; }
 
         /** Print method (for debugging) */
         void print() const;
